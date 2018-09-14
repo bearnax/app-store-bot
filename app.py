@@ -1,16 +1,23 @@
 import os
-
-from flask import Flask, jsonify, request
 import requests
 import psycopg2
 import play_scraper
 
+from flask import Flask, jsonify, request
 
 
 # verification_token = os.environ['VERIFICATION_TOKEN']
 app = Flask(__name__)
-apple_ids = (711074743, 418075935, 1098201243)
-google_names = ('com.catchsports.catchsports', 'com.foxsports.videogo')
+apple_ids = (
+    711074743,
+    418075935,
+    1098201243
+    )
+google_names = (
+    'com.catchsports.catchsports',
+    'com.foxsports.videogo',
+    'com.bleacherreport.android.teamstream'
+    )
 # TODO: move app ids to database
 base_apple_url = "https://itunes.apple.com/lookup?id="
 
@@ -19,21 +26,20 @@ def connect():
     """ Connect to PostgreSQL server """
 
     try:
-        #retrieve params from environment
+        # retrieve params from environment
         env_host = os.environ['PG_HOST']
         env_database = os.environ['PG_DATABASE']
         env_user = os.environ['PG_USER']
         env_password = os.environ['PG_PASSWORD']
 
         return psycopg2.connect(
-            host = env_host,
-            dbname = env_database,
-            user = env_user,
-            password = env_password
+            host=env_host,
+            dbname=env_database,
+            user=env_user,
+            password=env_password
         )
     except (Exception, psycopg2.DatabaseError) as error:
         print(error)
-
 
 
 def get_sql_data(query, *args):
@@ -44,9 +50,7 @@ def get_sql_data(query, *args):
 
         conn = connect()
         cursor = conn.cursor()
-
         cursor.execute(query, args)
-
         data = cursor.fetchall()
         cursor.close()
         conn.close()
@@ -57,7 +61,6 @@ def get_sql_data(query, *args):
 
     except AssertionError:
         print("ERROR: get_sql_data(), wrong number of arguments")
-
 
 
 def post_sql_data(query, *args):
@@ -84,9 +87,7 @@ def post_sql_data(query, *args):
         print("ERROR: post_sql_data(), wrong number of arguments")
 
 
-
 # TODO: add database queries
-
 
 
 def request_data_from_apple(url, args):
@@ -104,7 +105,37 @@ def request_data_from_apple(url, args):
         search_url += str(arg)
         search_url += ","
 
-    return requests.get(search_url)
+    try:
+        r = requests.get(search_url)
+        data = r.json()
+        return data
+
+    except TypeError as error:
+        print(error)
+
+def parse_data_from_apple(data):
+
+    all_responses = []
+
+    for result in data['results']:
+        parsed_response = [
+            {'title': result['trackName']},
+            {'category': result['primaryGenreName']},
+            {'average_user_rating_current_version':
+                result['averageUserRatingForCurrentVersion']},
+            {'review_count_current_version':
+                result['userRatingCountForCurrentVersion']},
+            {'average_user_rating': result['averageUserRating']},
+            {'review_count': result['userRatingCount']},
+            {'current_version': result['version']},
+            {'apple_app_id': result['trackId']},
+            {'minimum_os_version': result['minimumOsVersion']}
+
+        ]
+
+        all_responses.append(parsed_response)
+
+    return all_responses
 
 
 def request_data_from_google(args):
@@ -122,21 +153,18 @@ def request_data_from_google(args):
         parsed_response = [
             {'title': response['title']},
             {'category': response['category']},
-            {'score': response['score']},
-            {'score_histogram': response['histogram']},
+            {'average_user_rating': response['score']},
             {'review_count': response['reviews']},
             {'last_updated': response['updated']},
             {'installs': response['installs']},
             {'current_version': response['current_version']},
             {'package_name': response['app_id']},
-            {'required_android_version': response['required_android_version']}
+            {'minimum_os_version': response['required_android_version']}
         ]
 
         all_responses.append(parsed_response)
 
     return all_responses
-
-
 
 
 @app.route('/app-bot', methods=['POST'])
@@ -196,12 +224,11 @@ def app_bot():
         return jsonify(bot_response)
 
 
-
 @app.errorhandler(404)
 def not_found(error=None):
     message = {
-            'status': 404,
-            'message': 'Not Found: ' + request.url,
+        'status': 404,
+        'message': 'Not Found: ' + request.url,
     }
 
     error_response = jsonify(message)
@@ -210,10 +237,13 @@ def not_found(error=None):
     return error_response
 
 
-
 if __name__ == '__main__':
     # port = int(os.environ.get("PORT", 5000))
     # app.run(host='0.0.0.0', port=port, debug=True)
 
-    r = request_data_from_google(google_names)
-    print(r)
+    # google_response = request_data_from_google(google_names)
+    # print(google_response)
+    #
+    # apple_response = request_data_from_apple(base_apple_url, apple_ids)
+    # parsed_apple_response = parse_data_from_apple(apple_response)
+    # print(parsed_apple_response)
