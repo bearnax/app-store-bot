@@ -3,12 +3,14 @@ import os
 from flask import Flask, jsonify, request
 import requests
 import psycopg2
+import play_scraper
 
 
 
-verification_token = os.environ['VERIFICATION_TOKEN']
+# verification_token = os.environ['VERIFICATION_TOKEN']
 app = Flask(__name__)
-app_ids = (711074743, 418075935, 1098201243)
+apple_ids = (711074743, 418075935, 1098201243)
+google_names = ('com.catchsports.catchsports', 'com.foxsports.videogo')
 # TODO: move app ids to database
 base_apple_url = "https://itunes.apple.com/lookup?id="
 
@@ -83,6 +85,10 @@ def post_sql_data(query, *args):
 
 
 
+# TODO: add database queries
+
+
+
 def request_data_from_apple(url, args):
     """ Retrieve app data from the Apple App Atore via
     the Apple App Store url (api) call
@@ -100,6 +106,35 @@ def request_data_from_apple(url, args):
 
     return requests.get(search_url)
 
+
+def request_data_from_google(args):
+    """ Retrieve app data from the Google Play Store via the
+    play_scraper from pypi
+
+    Params:
+        args:type(str) > must be valid google package name
+    """
+
+    all_responses = []
+
+    for arg in args:
+        response = play_scraper.details(arg)
+        parsed_response = [
+            {'title': response['title']},
+            {'category': response['category']},
+            {'score': response['score']},
+            {'score_histogram': response['histogram']},
+            {'review_count': response['reviews']},
+            {'last_updated': response['updated']},
+            {'installs': response['installs']},
+            {'current_version': response['current_version']},
+            {'package_name': response['app_id']},
+            {'required_android_version': response['required_android_version']}
+        ]
+
+        all_responses.append(parsed_response)
+
+    return all_responses
 
 
 
@@ -147,7 +182,6 @@ def app_bot():
             # TODO: write some code here please
             pass
 
-
         else:
             bot_response = {
                 'response_type': 'in_channel',
@@ -180,11 +214,6 @@ def not_found(error=None):
 if __name__ == '__main__':
     # port = int(os.environ.get("PORT", 5000))
     # app.run(host='0.0.0.0', port=port, debug=True)
-    r = request_data_from_apple(base_apple_url, app_ids)
+
+    r = request_data_from_google(google_names)
     print(r)
-
-    r_json = r.json()
-    print(r_json['resultCount'])
-
-    for i in r_json['results']:
-        print(i["trackCensoredName"])
