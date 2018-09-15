@@ -120,26 +120,30 @@ def parse_data_from_apple(data):
 
     for result in data['results']:
         parsed_response = [
-            {'title': result['trackName']},
-            {'category': result['primaryGenreName']},
-            {'average_user_rating_current_version':
-                result['averageUserRatingForCurrentVersion']},
-            {'review_count_current_version':
-                result['userRatingCountForCurrentVersion']},
-            {'average_user_rating': result['averageUserRating']},
-            {'review_count': result['userRatingCount']},
-            {'current_version': result['version']},
-            {'apple_app_id': result['trackId']},
-            {'minimum_os_version': result['minimumOsVersion']},
-            {'last_updated': result['currentVersionReleaseDate']}
+            ['title', result['trackName']],
+            ['category', result['primaryGenreName']],
+            ['average_user_rating_current_version',
+                result['averageUserRatingForCurrentVersion']],
+            ['review_count_current_version',
+                result['userRatingCountForCurrentVersion']],
+            ['average_user_rating', result['averageUserRating']],
+            ['review_count', result['userRatingCount']],
+            ['current_version', result['version']],
+            ['apple_app_id', result['trackId']],
+            ['minimum_os_version', result['minimumOsVersion']],
+            ['last_updated', result['currentVersionReleaseDate']]
         ]
 
         # normalize non-uniform variables
-        parsed_response['category'] = parsed_response['category'].lower()
-        parsed_response['last_updated'] = datetime.datetime.strptime(
-            parsed_response['last_updated'], '%Y-%m-%dT%H:%M:%SZ'
-        ).date()
-        
+        for i in parsed_response:
+            if i[0] == 'category':
+                i[1] = i[1].lower()
+            elif i[0] == 'last_updated':
+                i[1] = datetime.datetime.strptime(
+                    i[1], '%Y-%m-%dT%H:%M:%SZ').date()
+            else:
+                pass
+
         all_responses.append(parsed_response)
 
     return all_responses
@@ -158,22 +162,26 @@ def request_data_from_google(args):
     for arg in args:
         response = play_scraper.details(arg)
         parsed_response = [
-            {'title': response['title']},
-            {'category': response['category']},
-            {'average_user_rating': response['score']},
-            {'review_count': response['reviews']},
-            {'last_updated': response['updated']},
-            {'installs': response['installs']},
-            {'current_version': response['current_version']},
-            {'package_name': response['app_id']},
-            {'minimum_os_version': response['required_android_version']}
+            ['title', response['title']],
+            ['category', response['category'][0]],
+            ['average_user_rating', response['score']],
+            ['review_count', response['reviews']],
+            ['last_updated', response['updated']],
+            ['installs', response['installs']],
+            ['current_version', response['current_version']],
+            ['package_name', response['app_id']],
+            ['minimum_os_version', response['required_android_version']]
         ]
 
         # normalize non-uniform variables
-        parsed_response['category'] = parsed_response['category'][0].lower()
-        parsed_response['last_updated'] = datetime.datetime.strptime(
-            parsed_response['last_updated'], '%B %d, %Y'
-        ).date()
+        for i in parsed_response:
+            if i[0] == 'category':
+                i[1] = i[1].lower()
+            elif i[0] == 'last_updated':
+                i[1] = datetime.datetime.strptime(
+                    i[1], '%B %d, %Y').date()
+            else:
+                pass
 
         all_responses.append(parsed_response)
 
@@ -254,9 +262,9 @@ if __name__ == '__main__':
     # port = int(os.environ.get("PORT", 5000))
     # app.run(host='0.0.0.0', port=port, debug=True)
 
-    # google_response = request_data_from_google(google_names)
-    # print(google_response)
-    #
-    # apple_response = request_data_from_apple(base_apple_url, apple_ids)
-    # parsed_apple_response = parse_data_from_apple(apple_response)
-    # print(parsed_apple_response)
+    google_response = request_data_from_google(google_names)
+    print(google_response)
+
+    apple_response = request_data_from_apple(base_apple_url, apple_ids)
+    parsed_apple_response = parse_data_from_apple(apple_response)
+    print(parsed_apple_response)
