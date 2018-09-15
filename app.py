@@ -9,18 +9,18 @@ from flask import Flask, jsonify, request
 
 verification_token = os.environ['VERIFICATION_TOKEN']
 app = Flask(__name__)
-apple_ids = (
-    711074743,
-    418075935,
-    1098201243
-    )
-google_names = (
-    'com.catchsports.catchsports',
-    'com.foxsports.videogo',
-    'com.bleacherreport.android.teamstream'
-    )
-# TODO: move app ids to database
-base_apple_url = "https://itunes.apple.com/lookup?id="
+# apple_ids = (
+#     711074743,
+#     418075935,
+#     1098201243
+#     )
+# google_names = (
+#     'com.catchsports.catchsports',
+#     'com.foxsports.videogo',
+#     'com.bleacherreport.android.teamstream'
+#     )
+
+BASE_APPLE_URL = "https://itunes.apple.com/lookup?id="
 
 
 
@@ -314,7 +314,7 @@ if __name__ == '__main__':
     #         i.average_rating
     #     ))
     #
-    # apple_response = request_data_from_apple(base_apple_url, apple_ids)
+    # apple_response = request_data_from_apple(BASE_APPLE_URL, apple_ids)
     # parsed_apple_responses = parse_data_from_apple(apple_response)
     # for i in parsed_apple_responses:
     #     print("{} where app_id={}\n   avg_rating={}".format(
