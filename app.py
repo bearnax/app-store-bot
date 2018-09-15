@@ -23,6 +23,44 @@ google_names = (
 base_apple_url = "https://itunes.apple.com/lookup?id="
 
 
+
+class Response(object):
+    """docstring for AppleResponse"""
+    __slots__=['title', 'category', 'average_rating','review_count',
+        'last_updated', 'installs', 'current_version', 'package_name',
+        'minimum_os_version', 'average_rating_current_version',
+        'review_count_current_version', 'apple_app_id']
+
+    def __init__(self, title, category, average_rating, review_count,
+        last_updated, installs, current_version, package_name,
+        minimum_os_version, average_rating_current_version,
+        review_count_current_version, apple_app_id):
+
+        self.title = title
+        self.category = category
+        self.average_rating = average_rating
+        self.review_count = review_count
+        self.last_updated = last_updated
+        self.installs = installs
+        self.current_version = current_version
+        self.package_name = package_name
+        self.minimum_os_version = minimum_os_version
+        self.average_rating_current_version = average_rating_current_version
+        self.review_count_current_version = review_count_current_version
+        self.apple_app_id = apple_app_id
+
+    def lower_category_case(self):
+        self.category = self.category.lower()
+
+    def strip_apple_update_date(self):
+        self.last_updated = datetime.datetime.strptime(
+            self.last_updated, '%Y-%m-%dT%H:%M:%SZ').date()
+
+    def strip_android_update_date(self):
+        self.last_updated = datetime.datetime.strptime(
+            self.last_updated, '%B %d, %Y').date()
+
+
 def connect():
     """ Connect to PostgreSQL server """
 
@@ -114,39 +152,39 @@ def request_data_from_apple(url, args):
     except TypeError as error:
         print(error)
 
+
+
 def parse_data_from_apple(data):
 
     all_responses = []
 
     for result in data['results']:
-        parsed_response = [
-            ['title', result['trackName']],
-            ['category', result['primaryGenreName']],
-            ['average_user_rating_current_version',
-                result['averageUserRatingForCurrentVersion']],
-            ['review_count_current_version',
-                result['userRatingCountForCurrentVersion']],
-            ['average_user_rating', result['averageUserRating']],
-            ['review_count', result['userRatingCount']],
-            ['current_version', result['version']],
-            ['apple_app_id', result['trackId']],
-            ['minimum_os_version', result['minimumOsVersion']],
-            ['last_updated', result['currentVersionReleaseDate']]
-        ]
+
+        response = Response(
+            title=result['trackName'],
+            category=result['primaryGenreName'],
+            average_rating=result['averageUserRating'],
+            review_count=result['userRatingCount'],
+            last_updated=result['currentVersionReleaseDate'],
+            installs=None,
+            current_version=result['version'],
+            package_name=None,
+            minimum_os_version=result['minimumOsVersion'],
+            average_rating_current_version=result[
+                'averageUserRatingForCurrentVersion'],
+            review_count_current_version=result[
+                'userRatingCountForCurrentVersion'],
+            apple_app_id=result['trackId'],
+        )
 
         # normalize non-uniform variables
-        for i in parsed_response:
-            if i[0] == 'category':
-                i[1] = i[1].lower()
-            elif i[0] == 'last_updated':
-                i[1] = datetime.datetime.strptime(
-                    i[1], '%Y-%m-%dT%H:%M:%SZ').date()
-            else:
-                pass
+        response.strip_apple_update_date()
+        response.lower_category_case()
 
-        all_responses.append(parsed_response)
+        all_responses.append(response)
 
     return all_responses
+
 
 
 def request_data_from_google(args):
@@ -160,30 +198,29 @@ def request_data_from_google(args):
     all_responses = []
 
     for arg in args:
-        response = play_scraper.details(arg)
-        parsed_response = [
-            ['title', response['title']],
-            ['category', response['category'][0]],
-            ['average_user_rating', response['score']],
-            ['review_count', response['reviews']],
-            ['last_updated', response['updated']],
-            ['installs', response['installs']],
-            ['current_version', response['current_version']],
-            ['package_name', response['app_id']],
-            ['minimum_os_version', response['required_android_version']]
-        ]
+
+        raw_response = play_scraper.details(arg)
+
+        response = Response(
+            title=raw_response['title'],
+            category=raw_response['category'][0],
+            average_rating=raw_response['score'],
+            review_count=raw_response['reviews'],
+            last_updated=raw_response['updated'],
+            installs=raw_response['installs'],
+            current_version=raw_response['current_version'],
+            package_name=raw_response['app_id'],
+            minimum_os_version=raw_response['required_android_version'],
+            average_rating_current_version=None,
+            review_count_current_version=None,
+            apple_app_id=None,
+        )
 
         # normalize non-uniform variables
-        for i in parsed_response:
-            if i[0] == 'category':
-                i[1] = i[1].lower()
-            elif i[0] == 'last_updated':
-                i[1] = datetime.datetime.strptime(
-                    i[1], '%B %d, %Y').date()
-            else:
-                pass
+        response.strip_android_update_date()
+        response.lower_category_case()
 
-        all_responses.append(parsed_response)
+        all_responses.append(response)
 
     return all_responses
 
@@ -263,8 +300,18 @@ if __name__ == '__main__':
     # app.run(host='0.0.0.0', port=port, debug=True)
 
     google_response = request_data_from_google(google_names)
-    print(google_response)
+    for i in google_response:
+        print("{} where package_name={}\n   avg_rating={}".format(
+            i.title,
+            i.package_name,
+            i.average_rating
+        ))
 
     apple_response = request_data_from_apple(base_apple_url, apple_ids)
-    parsed_apple_response = parse_data_from_apple(apple_response)
-    print(parsed_apple_response)
+    parsed_apple_responses = parse_data_from_apple(apple_response)
+    for i in parsed_apple_responses:
+        print("{} where app_id={}\n   avg_rating={}".format(
+            i.title,
+            i.apple_app_id,
+            i.average_rating
+        ))
