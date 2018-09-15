@@ -7,7 +7,7 @@ import datetime
 from flask import Flask, jsonify, request
 
 
-# verification_token = os.environ['VERIFICATION_TOKEN']
+verification_token = os.environ['VERIFICATION_TOKEN']
 app = Flask(__name__)
 apple_ids = (
     711074743,
@@ -225,8 +225,8 @@ def request_data_from_google(args):
     return all_responses
 
 
-@app.route('/app-bot', methods=['POST'])
-def app_bot():
+@app.route('/storebot', methods=['POST'])
+def storebot():
     if request.form['token'] == verification_token:
 
         data = request.values
@@ -256,11 +256,18 @@ def app_bot():
             # TODO: write some code here please, this one probaby needs 'banter'
             pass
 
-        elif command == 'rank today':
-            """ initiate data ingestion manually
+        elif command == 'get ranking':
+            """ return the all time ranking for all tracked apps
             """
-            # TODO: write some code here please
-            pass
+            bot_response = {
+                'response_type': 'in_channel',
+                'attachments': [
+                    {
+                        'title': 'request received',
+                        'text': 'response sent'
+                    }
+                ]
+            }
 
         elif command == 'rank current version':
             """ initiate data ingestion manually
@@ -296,22 +303,22 @@ def not_found(error=None):
 
 
 if __name__ == '__main__':
-    # port = int(os.environ.get("PORT", 5000))
-    # app.run(host='0.0.0.0', port=port, debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port, debug=True)
 
-    google_response = request_data_from_google(google_names)
-    for i in google_response:
-        print("{} where package_name={}\n   avg_rating={}".format(
-            i.title,
-            i.package_name,
-            i.average_rating
-        ))
-
-    apple_response = request_data_from_apple(base_apple_url, apple_ids)
-    parsed_apple_responses = parse_data_from_apple(apple_response)
-    for i in parsed_apple_responses:
-        print("{} where app_id={}\n   avg_rating={}".format(
-            i.title,
-            i.apple_app_id,
-            i.average_rating
-        ))
+    # google_response = request_data_from_google(google_names)
+    # for i in google_response:
+    #     print("{} where package_name={}\n   avg_rating={}".format(
+    #         i.title,
+    #         i.package_name,
+    #         i.average_rating
+    #     ))
+    #
+    # apple_response = request_data_from_apple(base_apple_url, apple_ids)
+    # parsed_apple_responses = parse_data_from_apple(apple_response)
+    # for i in parsed_apple_responses:
+    #     print("{} where app_id={}\n   avg_rating={}".format(
+    #         i.title,
+    #         i.apple_app_id,
+    #         i.average_rating
+    #     ))
