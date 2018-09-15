@@ -9,16 +9,6 @@ from flask import Flask, jsonify, request
 
 verification_token = os.environ['VERIFICATION_TOKEN']
 app = Flask(__name__)
-# apple_ids = (
-#     711074743,
-#     418075935,
-#     1098201243
-#     )
-# google_names = (
-#     'com.catchsports.catchsports',
-#     'com.foxsports.videogo',
-#     'com.bleacherreport.android.teamstream'
-#     )
 
 BASE_APPLE_URL = "https://itunes.apple.com/lookup?id="
 
@@ -126,7 +116,33 @@ def post_sql_data(query, *args):
         print("ERROR: post_sql_data(), wrong number of arguments")
 
 
-# TODO: add database queries
+GET_ALL_APPLE_IDS = """
+    SELECT apple_id
+    FROM app_data;
+"""
+
+GET_ALL_GOOGLE_IDS = """
+    SELECT google_name
+    FROM app_data;
+"""
+
+INSERT_APP_DATA = """
+    INSERT INTO app_data (
+      title,
+      category,
+      average_user_rating,
+      review_count,
+      last_updated,
+      installs,
+      current_version,
+      package_name,
+      minimum_os_version,
+      average_user_rating_current_version,
+      review_count_current_version,
+      apple_app_id
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+"""
 
 
 def request_data_from_apple(url, args):
@@ -235,8 +251,63 @@ def storebot():
         if command == "manual data refresh":
             """ initiate data ingestion manually
             """
-            # TODO: write some code here please
-            pass
+            apple_ids = get_sql_data(GET_ALL_APPLE_IDS)
+            google_ids = get_sql_data(GET_ALL_GOOGLE_IDS)
+
+            apple_response = request_data_from_apple(BASE_APPLE_URL, apple_ids)
+            parsed_apple_response = parse_data_from_apple(apple_response)
+            google_responses = request_data_from_google(google_ids)
+
+            all_responses = []
+
+            for i in parsed_apple_response:
+                all_responses.append(i)
+
+            for i in google_responses:
+                all_responses.append(i)
+
+            insertion_success_counter = 0
+            insertion_error_counter = 0
+            error_messages = []
+
+            for i in all_responses:
+                try:
+                    post_sql_data(INSERT_APP_DATA,
+                        i.title,
+                        i.category,
+                        i.average_user_rating,
+                        i.review_count,
+                        i.last_updated,
+                        i.current_version,
+                        i.package_name,
+                        i.minimum_os_version,
+                        i.average_user_rating_current_version,
+                        i.review_count_current_version,
+                        i.apple_app_id
+                    )
+                    insertion_success_counter += 1
+                except Exception as error:
+                    insertion_error_counter += 1
+                    error_messages.append(str(error))
+
+            if insertion_error_counter == 0:
+                bot_response = {
+                    'response_type': 'in_channel',
+                    'pre-text': '{} records added, with 0 errors'.format(
+                        insertion_success_counter
+                    )
+                }
+            else:
+                bot_response = {
+                    'response_type': 'in_channel',
+                    'pre-text': '{} records added, with {} errors'.format(
+                        insertion_success_counter,
+                        insertion_error_counter
+                    ),
+                    'text': 'error messages: {}'.format(
+                        error_messages
+                    )
+                }
 
         elif command == 'add_new app':
             """ initiate data ingestion manually
