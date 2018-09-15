@@ -2,6 +2,7 @@ import os
 import requests
 import psycopg2
 import play_scraper
+import datetime
 
 from flask import Flask, jsonify, request
 
@@ -129,10 +130,16 @@ def parse_data_from_apple(data):
             {'review_count': result['userRatingCount']},
             {'current_version': result['version']},
             {'apple_app_id': result['trackId']},
-            {'minimum_os_version': result['minimumOsVersion']}
-
+            {'minimum_os_version': result['minimumOsVersion']},
+            {'last_updated': result['currentVersionReleaseDate']}
         ]
 
+        # normalize non-uniform variables
+        parsed_response['category'] = parsed_response['category'].lower()
+        parsed_response['last_updated'] = datetime.datetime.strptime(
+            parsed_response['last_updated'], '%Y-%m-%dT%H:%M:%SZ'
+        ).date()
+        
         all_responses.append(parsed_response)
 
     return all_responses
@@ -161,6 +168,12 @@ def request_data_from_google(args):
             {'package_name': response['app_id']},
             {'minimum_os_version': response['required_android_version']}
         ]
+
+        # normalize non-uniform variables
+        parsed_response['category'] = parsed_response['category'][0].lower()
+        parsed_response['last_updated'] = datetime.datetime.strptime(
+            parsed_response['last_updated'], '%B %d, %Y'
+        ).date()
 
         all_responses.append(parsed_response)
 
