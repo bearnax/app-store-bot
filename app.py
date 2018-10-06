@@ -45,6 +45,21 @@ class NotACommandError(Error):
     def __init__(self):
         self.error_message = "I'm afraid I can't do that :space_invader:"
 
+class SlackRequest(object):
+    """docstring for SlackRequest"""
+    __slots__=['data', 'text', 'user_name', 'command', 'channel_id', 'event_id']
+
+    def __init__(self, data):
+
+        self.data = data
+        self.text = self.data['event']['text']
+        self.user_name = data['authed_users'][0]
+        self.command = remove_user_name(
+            self.slack_user_name,
+            self.text).lower()
+        self.channel_id = self.data['event']['channel']
+        self.event_id = data['event_id']
+
 class Response(object):
     """docstring for AppleResponse"""
     __slots__=['title', 'category', 'average_rating','review_count',
@@ -81,7 +96,21 @@ class Response(object):
         self.last_updated = datetime.datetime.strptime(
             self.last_updated, '%B %d, %Y').date()
 
+class EventLog(object):
+    """docstring for event log"""
+    __slots__=['event_log']
 
+    def __init__(self):
+        self.event_log = []
+
+    def event_log_length(self):
+        return len(self.event_log)
+
+    def shorten_log(self, length_to_remove):
+        del self.event_log[0:length_to_remove]
+
+    def delete_all_logs(self):
+        self.event_log.clear()
 
 
 # +++++++++++
@@ -415,22 +444,33 @@ def refresh_data():
 
 
 def storebot_do(incoming_payload):
-    data = incoming_payload.json
-    text = data['event']['text']
-    user_name = data['authed_users'][0]
-    command = remove_user_name(user_name, text).lower()
-    channel_id = data['event']['channel']
+    """delayed response to the slack client
+    """
+
+    #parse the incoming_payload
+    request = SlackRequest(incoming_payload)
+
+    #Verify the message isn't a duplicate
+    if request.event_id in log:
+        print("Error: status=429 Duplicate Request")
+        return make_response(
+            "Duplicate Request", 429,
+        )
+    else:
+        log.append(request.event_id)
+
+
 
     try:
-        if len(command) == 0:
+        if len(request.command) == 0:
             print('no text at all')
             raise NoCommandReceivedError
 
-        elif 'do' not in command[0:2]:
+        elif 'do' not in request.command[0:2]:
             print('is not a command')
             raise NotACommandError
 
-        elif 'manual refresh' in command:
+        elif 'manual refresh' in request.command:
             print('manual data refresh requested')
             message = refresh_data()
 
@@ -444,7 +484,7 @@ def storebot_do(incoming_payload):
     except NotACommandError as error:
         message = error.error_message
 
-    send_slack_message(channel_id, message)
+    send_slack_message(request.channel_id, message)
 
 
 @APP.route('/mentions', methods=['POST'])
@@ -475,7 +515,8 @@ def not_found(error=None):
 
 
 if __name__ == '__main__':
-    print('')
+    print('STARTING')
+    log = EventLog
 
     slack_connection_test()
     # send_slack_message('CCQBB1231', 'Bonjour le monde :tada:')
