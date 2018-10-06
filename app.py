@@ -489,13 +489,13 @@ def storebot_do(incoming_payload):
 
 @APP.route('/mentions', methods=['POST'])
 def mentions():
-    # response = verify_url_with_slack(request)
-    # return response
-    # VERIFIED: https://ef07805a.ngrok.io/mentions
-
-    return make_response(
-        "Mention received", 200,
-    ), storebot_do(request)
+    if request.json['challenge']:
+        response = verify_url_with_slack(request)
+        return response
+    else:
+        return make_response(
+            "Mention received", 200,
+        ), storebot_do(request)
 
 @APP.errorhandler(404)
 # TODO: Create an exception and real errors for this
