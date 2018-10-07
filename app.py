@@ -1,10 +1,11 @@
-import os
-import requests
-import psycopg2
-import play_scraper
 import datetime
-from slackclient import SlackClient
+import json
+import os
+import play_scraper
+import psycopg2
+import requests
 
+from slackclient import SlackClient
 from flask import Flask, jsonify, request, make_response
 
 
@@ -14,12 +15,54 @@ from flask import Flask, jsonify, request, make_response
 APP = Flask(__name__)
 
 SLACK_TOKEN = os.environ.get('VERIFICATION_TOKEN', True)
-SLACK_CLIENT = SlackClient(SLACK_TOKEN),
+SLACK_CLIENT = SlackClient(SLACK_TOKEN)
 
-SLACK_OATH = os.environ.get('SLACK_OATH_TOKEN', True)
-SLACK_API_CLIENT = SlackClient(SLACK_OATH)
+SLACK_OUATH = os.environ.get('SLACK_OAUTH_TOKEN', True)
+SLACK_API_CLIENT = SlackClient(SLACK_OUATH)
 
 BASE_APPLE_URL = "https://itunes.apple.com/lookup?id="
+
+JSON_LOG_LOCATION = 'event_ids.json'
+MAX_LOG_LENGTH = 10
+LOG_DELETION_LENGTH = 4
+
+
+# ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ GENERIC FUNCTIONS
+
+def import_json(json_file):
+    """Import json data from local file
+
+    PARAMS:
+        json_file=type(str):
+            name of local filename
+    """
+
+    with open(json_file) as data:
+        return json.load(data)
+
+def export_json(destination_file, data):
+    """Export logged ids to a local json file and truncate the file length if
+    it's getting too large
+
+    PARAMS:
+        destination_file=type(str):
+            name of local filename that is the destination for the json
+
+        data=type(dict):
+            the dictionary containing the event id's that have been logged
+    """
+
+    if len(data['ids']) > MAX_LOG_LENGTH:
+        print("Log file is too long, deleted {} older records".format(
+            LOG_DELETION_LENGTH
+            )
+        )
+        del data['ids'][0: LOG_DELETION_LENGTH]
+
+    with open(destination_file, 'w') as outfile:
+        json.dump(data, outfile)
+
+
 
 
 # ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ CLASSES
@@ -31,9 +74,9 @@ class Error(Exception):
 class NoCommandReceivedError(Error):
     """Raised when no command is recieved from slack user"""
     __slots__=['error_message']
+
     def __init__(self):
         self.error_message = "No command received, stop bothering me for no reason."
-
 
 class NotACommandError(Error):
     """Raised when a command is received from the slack user,
@@ -43,22 +86,44 @@ class NotACommandError(Error):
     __slots__=['error_message']
 
     def __init__(self):
-        self.error_message = "I'm afraid I can't do that :space_invader:"
+        self.error_message = "I'm afraid I can't do that :female-astronaut:, please start a command with the word 'do'"
+
+class UnknownCommandError(Error):
+    """Raised when a user make a command, but the specific action
+    requested is unknown or mistyped.
+    """
+
+    __slots__=['error_message']
+
+    def __init__(self):
+        self.error_message = "Your wish is my command :crystal_ball: ... except, I'm not really sure what your command is... I probably need more/better programming in order to do that."
+
+class DuplicateRequestError(Error):
+    """Raised when a slack sends too many requests for a single command
+    made by the user
+    """
+
+    __slots__=['error_message']
+
+    def __init__(self):
+        self.error_message = "Duplicate Request - no response sent."
+
 
 class SlackRequest(object):
     """docstring for SlackRequest"""
-    __slots__=['data', 'text', 'user_name', 'command', 'channel_id', 'event_id']
+    __slots__=['raw_request', 'data', 'text', 'bot_username', 'command', 'channel_id', 'event_id']
 
-    def __init__(self, data):
+    def __init__(self, raw_request):
 
-        self.data = data
+        self.raw_request = raw_request
+        self.data = raw_request.json
         self.text = self.data['event']['text']
-        self.user_name = data['authed_users'][0]
-        self.command = remove_user_name(
-            self.slack_user_name,
+        self.bot_username = self.data['authed_users'][0]
+        self.command = remove_botname_from_text(
+            self.bot_username,
             self.text).lower()
         self.channel_id = self.data['event']['channel']
-        self.event_id = data['event_id']
+        self.event_id = self.data['event_id']
 
 class Response(object):
     """docstring for AppleResponse"""
@@ -98,19 +163,23 @@ class Response(object):
 
 class EventLog(object):
     """docstring for event log"""
-    __slots__=['event_log']
+    __slots__=['ids']
 
     def __init__(self):
-        self.event_log = []
+        self.ids = import_json(JSON_LOG_LOCATION)
+
+    def export_json_logs(self, json_file):
+        with open(json_file, 'w') as outfile:
+            json.dump(self.ids, outfile)
 
     def event_log_length(self):
-        return len(self.event_log)
+        return len(self.ids["ids"])
 
     def shorten_log(self, length_to_remove):
-        del self.event_log[0:length_to_remove]
+        del self.ids["ids"][0:length_to_remove]
 
     def delete_all_logs(self):
-        self.event_log.clear()
+        self.ids["ids"].clear()
 
 
 # +++++++++++
@@ -130,7 +199,7 @@ def slack_connection_test():
         print('Connection Success!\n')
 
     except Exception as error:
-        print("Conncetion Failed:")
+        print("Connection Failed...")
         print(error)
 
 def verify_url_with_slack(request_load):
@@ -176,14 +245,14 @@ def strip_decorators(name):
     return strp_name
 
 
-def remove_user_name(slack_user_name, string):
+def remove_botname_from_text(bot_name, string):
     """ Strip out user name from a slack mention text
     """
-    user_name = strip_decorators(slack_user_name)
+    name = strip_decorators(bot_name)
 
     try:
-        assert user_name in string
-        command = strip_decorators(string.replace(slack_user_name, ''))
+        assert name in string
+        command = strip_decorators(string.replace(bot_name, ''))
         return command.lstrip()
 
     except AssertionError:
@@ -443,59 +512,70 @@ def refresh_data():
 
 
 
-def storebot_do(incoming_payload):
+def storebot_do(incoming_request):
     """delayed response to the slack client
     """
 
-    #parse the incoming_payload
-    request = SlackRequest(incoming_payload)
+    #parse the incoming_request
+    output = SlackRequest(incoming_request)
 
-    #Verify the message isn't a duplicate
-    if request.event_id in log:
-        print("Error: status=429 Duplicate Request")
-        return make_response(
-            "Duplicate Request", 429,
-        )
-    else:
-        log.append(request.event_id)
-
-
+    event_json = import_json(JSON_LOG_LOCATION)
 
     try:
-        if len(request.command) == 0:
-            print('no text at all')
+        if output.event_id in event_json['ids']:
+            raise DuplicateRequestError
+
+        elif len(output.command) == 0:
             raise NoCommandReceivedError
 
-        elif 'do' not in request.command[0:2]:
-            print('is not a command')
+        elif 'do' not in output.command[0:2]:
             raise NotACommandError
 
-        elif 'manual refresh' in request.command:
-            print('manual data refresh requested')
+        elif 'manual refresh' in output.command:
+            print('Command Received: Manual data refresh... processing')
             message = refresh_data()
 
         else:
-            print('do, something unknown')
-            message = "Your wish is my command :crystal_ball:"
+            raise UnknownCommandError
+
+    except DuplicateRequestError as error:
+        print(error.error_message)
+        return 0
 
     except NoCommandReceivedError as error:
+        print("Error: no text/command received")
         message = error.error_message
 
     except NotACommandError as error:
+        print("Error: Not a command, text=('{}')".format(output.command))
         message = error.error_message
 
-    send_slack_message(request.channel_id, message)
+    except UnknownCommandError as error:
+        print("Error: Unknown command, text=('{}')".format(output.command))
+        message = error.error_message
+
+    # Log any new events to avoid an issues w/ duplication
+    # TODO: add timestamp monitoring, so you can ingore old requests.
+    event_json['ids'].append(output.event_id)
+    export_json(JSON_LOG_LOCATION, event_json)
+
+    send_slack_message(output.channel_id, message)
 
 
 @APP.route('/mentions', methods=['POST'])
 def mentions():
-    if request.json['challenge']:
+
+    if 'challenge' in request.json:
+        print("Request Type = Challenge")
         response = verify_url_with_slack(request)
         return response
     else:
+        print("Request Type = Mention")
+
         return make_response(
-            "Mention received", 200,
+            "Mention Received, 200"
         ), storebot_do(request)
+
 
 @APP.errorhandler(404)
 # TODO: Create an exception and real errors for this
@@ -515,8 +595,7 @@ def not_found(error=None):
 
 
 if __name__ == '__main__':
-    print('STARTING')
-    log = EventLog
+    print('Starting up...')
 
     slack_connection_test()
     # send_slack_message('CCQBB1231', 'Bonjour le monde :tada:')
