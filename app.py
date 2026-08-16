@@ -1,28 +1,129 @@
-import os
-import requests
-import psycopg2
-import play_scraper
 import datetime
+import json
+import os
+import play_scraper
+import psycopg2
+import requests
 
-from flask import Flask, jsonify, request
+from slackclient import SlackClient
+from flask import Flask, jsonify, request, make_response
 
 
-verification_token = os.environ['VERIFICATION_TOKEN']
-app = Flask(__name__)
-# apple_ids = (
-#     711074743,
-#     418075935,
-#     1098201243
-#     )
-# google_names = (
-#     'com.catchsports.catchsports',
-#     'com.foxsports.videogo',
-#     'com.bleacherreport.android.teamstream'
-#     )
+
+# ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ CONSTANTS
+
+APP = Flask(__name__)
+
+SLACK_TOKEN = os.environ.get('VERIFICATION_TOKEN', True)
+SLACK_CLIENT = SlackClient(SLACK_TOKEN)
+
+SLACK_OUATH = os.environ.get('SLACK_OAUTH_TOKEN', True)
+SLACK_API_CLIENT = SlackClient(SLACK_OUATH)
 
 BASE_APPLE_URL = "https://itunes.apple.com/lookup?id="
 
+JSON_LOG_LOCATION = 'event_ids.json'
+MAX_LOG_LENGTH = 10
+LOG_DELETION_LENGTH = 4
 
+
+# ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ GENERIC FUNCTIONS
+
+def import_json(json_file):
+    """Import json data from local file
+
+    PARAMS:
+        json_file=type(str):
+            name of local filename
+    """
+
+    with open(json_file) as data:
+        return json.load(data)
+
+def export_json(destination_file, data):
+    """Export logged ids to a local json file and truncate the file length if
+    it's getting too large
+
+    PARAMS:
+        destination_file=type(str):
+            name of local filename that is the destination for the json
+
+        data=type(dict):
+            the dictionary containing the event id's that have been logged
+    """
+
+    if len(data['ids']) > MAX_LOG_LENGTH:
+        print("Log file is too long, deleted {} older records".format(
+            LOG_DELETION_LENGTH
+            )
+        )
+        del data['ids'][0: LOG_DELETION_LENGTH]
+
+    with open(destination_file, 'w') as outfile:
+        json.dump(data, outfile)
+
+
+
+
+# ++++++++++++++++++++++++++++++++++++++++++++++++++++++++ CLASSES
+
+class Error(Exception):
+    """Base class for exceptions"""
+    pass
+
+class NoCommandReceivedError(Error):
+    """Raised when no command is recieved from slack user"""
+    __slots__=['error_message']
+
+    def __init__(self):
+        self.error_message = "No command received, stop bothering me for no reason."
+
+class NotACommandError(Error):
+    """Raised when a command is received from the slack user,
+    but the command is misunderstood and cannot be performed.
+    """
+
+    __slots__=['error_message']
+
+    def __init__(self):
+        self.error_message = "I'm afraid I can't do that :female-astronaut:, please start a command with the word 'do'"
+
+class UnknownCommandError(Error):
+    """Raised when a user make a command, but the specific action
+    requested is unknown or mistyped.
+    """
+
+    __slots__=['error_message']
+
+    def __init__(self):
+        self.error_message = "Your wish is my command :crystal_ball: ... except, I'm not really sure what your command is... I probably need more/better programming in order to do that."
+
+class DuplicateRequestError(Error):
+    """Raised when a slack sends too many requests for a single command
+    made by the user
+    """
+
+    __slots__=['error_message']
+
+    def __init__(self):
+        self.error_message = "Duplicate Request - no response sent."
+
+
+class SlackRequest(object):
+    """docstring for SlackRequest"""
+    __slots__=['raw_request', 'data', 'text', 'bot_username', 'command', 'channel_id', 'event_id']
+
+    def __init__(self, raw_request):
+
+        self.raw_request = raw_request
+        self.data = raw_request.json
+        self.text = self.data['event']['text']
+        self.bot_username = self.data['authed_users'][0]
+        self.command = remove_botname_from_text(
+            self.bot_username,
+            self.text).lower()
+        self.channel_id = self.data['event']['channel']
+        self.event_id = self.data['event_id']
 
 class Response(object):
     """docstring for AppleResponse"""
@@ -60,16 +161,113 @@ class Response(object):
         self.last_updated = datetime.datetime.strptime(
             self.last_updated, '%B %d, %Y').date()
 
+class EventLog(object):
+    """docstring for event log"""
+    __slots__=['ids']
+
+    def __init__(self):
+        self.ids = import_json(JSON_LOG_LOCATION)
+
+    def export_json_logs(self, json_file):
+        with open(json_file, 'w') as outfile:
+            json.dump(self.ids, outfile)
+
+    def event_log_length(self):
+        return len(self.ids["ids"])
+
+    def shorten_log(self, length_to_remove):
+        del self.ids["ids"][0:length_to_remove]
+
+    def delete_all_logs(self):
+        self.ids["ids"].clear()
+
+
+# +++++++++++
+# +++++++++++++++++++++++++++++++++++++++++++++++++++++ SLACK FUNCTIONS
+# +++++++++++
+
+
+def slack_connection_test():
+    print('CONNECTING...')
+    try:
+        test = SLACK_API_CLIENT.api_call('api.test')
+        auth = SLACK_API_CLIENT.api_call('auth.test')
+
+        assert test['ok']
+        assert auth['ok']
+
+        print('Connection Success!\n')
+
+    except Exception as error:
+        print("Connection Failed...")
+        print(error)
+
+def verify_url_with_slack(request_load):
+    try:
+        request_load.json['token'] == SLACK_TOKEN
+
+        payload = {
+            "Content-type": "application/json",
+            "challenge": "{}".format(request_load.json['challenge'])
+        }
+
+        return jsonify(payload)
+
+    except Exception as error:
+        print(error)
+
+def parse_mention(incoming_payload):
+    data = incoming_payload.json
+
+    print('{}: {}'.format(
+        data['event']['type'],
+        data['event']['text']
+    ))
+
+
+def send_slack_message(channel_id, message):
+    """
+    params: (
+        channel_id :: type(str)
+        message :: type(str)
+    )
+    """
+    SLACK_API_CLIENT.api_call(
+        'chat.postMessage',
+        channel=channel_id,
+        text=message
+    )
+
+
+
+def strip_decorators(name):
+    strp_name = name.strip('<>@')
+    return strp_name
+
+
+def remove_botname_from_text(bot_name, string):
+    """ Strip out user name from a slack mention text
+    """
+    name = strip_decorators(bot_name)
+
+    try:
+        assert name in string
+        command = strip_decorators(string.replace(bot_name, ''))
+        return command.lstrip()
+
+    except AssertionError:
+        return string
+
 
 def connect():
     """ Connect to PostgreSQL server """
 
     try:
         # retrieve params from environment
-        env_host = os.environ['PG_HOST']
-        env_database = os.environ['PG_DATABASE']
-        env_user = os.environ['PG_USER']
-        env_password = os.environ['PG_PASSWORD']
+        env_host = os.environ.get('PG_HOST', True)
+        env_database = os.environ.get('PG_DATABASE', True)
+        env_user = os.environ.get('PG_USER', True)
+        env_password = os.environ.get('PG_PASSWORD', True)
 
         return psycopg2.connect(
             host=env_host,
@@ -126,7 +324,33 @@ def post_sql_data(query, *args):
         print("ERROR: post_sql_data(), wrong number of arguments")
 
 
-# TODO: add database queries
+GET_ALL_APPLE_IDS = """
+    SELECT apple_id
+    FROM tracked_apps;
+"""
+
+GET_ALL_GOOGLE_IDS = """
+    SELECT google_name
+    FROM tracked_apps;
+"""
+
+INSERT_APP_DATA = """
+    INSERT INTO app_data (
+      title,
+      category,
+      average_user_rating,
+      review_count,
+      last_updated,
+      installs,
+      current_version,
+      package_name,
+      minimum_os_version,
+      average_user_rating_current_version,
+      review_count_current_version,
+      apple_app_id
+    )
+    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);
+"""
 
 
 def request_data_from_apple(url, args):
@@ -141,7 +365,7 @@ def request_data_from_apple(url, args):
     search_url = url
 
     for arg in args:
-        search_url += str(arg)
+        search_url += str(arg[0])
         search_url += ","
 
     try:
@@ -199,7 +423,7 @@ def request_data_from_google(args):
 
     for arg in args:
 
-        raw_response = play_scraper.details(arg)
+        raw_response = play_scraper.details(arg[0])
 
         response = Response(
             title=raw_response['title'],
@@ -225,71 +449,136 @@ def request_data_from_google(args):
     return all_responses
 
 
-@app.route('/storebot', methods=['POST'])
-def storebot():
-    if request.form['token'] == verification_token:
 
-        data = request.values
-        command = data['text'].lower()
 
-        if command == "manual data refresh":
-            """ initiate data ingestion manually
-            """
-            # TODO: write some code here please
-            pass
+def refresh_data():
+    """ initiate data ingestion manually
+    """
 
-        elif command == 'add_new app':
-            """ initiate data ingestion manually
-            """
-            # TODO: write some code here please, this one probaby needs 'banter'
-            pass
+    apple_ids = get_sql_data(GET_ALL_APPLE_IDS)
+    google_ids = get_sql_data(GET_ALL_GOOGLE_IDS)
 
-        elif command == 'hide app from ranking':
-            """ initiate data ingestion manually
-            """
-            # TODO: write some code here please, this one probaby needs 'banter'
-            pass
+    apple_response = request_data_from_apple(BASE_APPLE_URL, apple_ids)
+    parsed_apple_response = parse_data_from_apple(apple_response)
+    google_responses = request_data_from_google(google_ids)
 
-        elif command == 'delete app':
-            """ initiate data ingestion manually
-            """
-            # TODO: write some code here please, this one probaby needs 'banter'
-            pass
+    all_responses = []
 
-        elif command == 'get ranking':
-            """ return the all time ranking for all tracked apps
-            """
-            bot_response = {
-                'response_type': 'in_channel',
-                'attachments': [
-                    {
-                        'title': 'request received',
-                        'text': 'response sent'
-                    }
-                ]
-            }
+    for i in parsed_apple_response:
+        all_responses.append(i)
 
-        elif command == 'rank current version':
-            """ initiate data ingestion manually
-            """
-            # TODO: write some code here please
-            pass
+    for i in google_responses:
+        all_responses.append(i)
+
+    insertion_success_counter = 0
+    insertion_error_counter = 0
+    error_messages = []
+
+    for i in all_responses:
+        try:
+            post_sql_data(INSERT_APP_DATA,
+                i.title,
+                i.category,
+                i.average_rating,
+                i.review_count,
+                i.last_updated,
+                i.installs,
+                i.current_version,
+                i.package_name,
+                i.minimum_os_version,
+                i.average_rating_current_version,
+                i.review_count_current_version,
+                i.apple_app_id
+            )
+            insertion_success_counter += 1
+
+        except Exception as error:
+            print(error)
+            insertion_error_counter += 1
+            error_messages.append(str(error))
+
+    if insertion_error_counter == 0:
+        message = '{} records added, with 0 errors'.format(
+                insertion_success_counter
+        )
+
+    else:
+        message = '{} records added, with {} errors'.format(
+                insertion_success_counter,
+                insertion_error_counter
+            )
+
+    return message
+
+
+
+def storebot_do(incoming_request):
+    """delayed response to the slack client
+    """
+
+    #parse the incoming_request
+    output = SlackRequest(incoming_request)
+
+    event_json = import_json(JSON_LOG_LOCATION)
+
+    try:
+        if output.event_id in event_json['ids']:
+            raise DuplicateRequestError
+
+        elif len(output.command) == 0:
+            raise NoCommandReceivedError
+
+        elif 'do' not in output.command[0:2]:
+            raise NotACommandError
+
+        elif 'manual refresh' in output.command:
+            print('Command Received: Manual data refresh... processing')
+            message = refresh_data()
 
         else:
-            bot_response = {
-                'response_type': 'in_channel',
-                'attachments': [
-                    {
-                        'title': 'error: unknown command',
-                        'text': 'imma pray on this one.'
-                    }
-                ]
-            }
+            raise UnknownCommandError
 
-        return jsonify(bot_response)
+    except DuplicateRequestError as error:
+        print(error.error_message)
+        return 0
+
+    except NoCommandReceivedError as error:
+        print("Error: no text/command received")
+        message = error.error_message
+
+    except NotACommandError as error:
+        print("Error: Not a command, text=('{}')".format(output.command))
+        message = error.error_message
+
+    except UnknownCommandError as error:
+        print("Error: Unknown command, text=('{}')".format(output.command))
+        message = error.error_message
+
+    # Log any new events to avoid an issues w/ duplication
+    # TODO: add timestamp monitoring, so you can ingore old requests.
+    event_json['ids'].append(output.event_id)
+    export_json(JSON_LOG_LOCATION, event_json)
+
+    send_slack_message(output.channel_id, message)
 
 
-@app.errorhandler(404)
+@APP.route('/mentions', methods=['POST'])
+def mentions():
+
+    if 'challenge' in request.json:
+        print("Request Type = Challenge")
+        response = verify_url_with_slack(request)
+        return response
+    else:
+        print("Request Type = Mention")
+
+        return make_response(
+            "Mention Received, 200"
+        ), storebot_do(request)
+
+
+@APP.errorhandler(404)
+# TODO: Create an exception and real errors for this
 def not_found(error=None):
     message = {
         'status': 404,
@@ -302,23 +591,14 @@ def not_found(error=None):
     return error_response
 
 
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port, debug=True)
 
-    # google_response = request_data_from_google(google_names)
-    # for i in google_response:
-    #     print("{} where package_name={}\n   avg_rating={}".format(
-    #         i.title,
-    #         i.package_name,
-    #         i.average_rating
-    #     ))
-    #
-    # apple_response = request_data_from_apple(BASE_APPLE_URL, apple_ids)
-    # parsed_apple_responses = parse_data_from_apple(apple_response)
-    # for i in parsed_apple_responses:
-    #     print("{} where app_id={}\n   avg_rating={}".format(
-    #         i.title,
-    #         i.apple_app_id,
-    #         i.average_rating
-    #     ))
+
+
+if __name__ == '__main__':
+    print('Starting up...')
+
+    slack_connection_test()
+    # send_slack_message('CCQBB1231', 'Bonjour le monde :tada:')
+
+    port = int(os.environ.get("PORT", 5000))
+    APP.run(host='0.0.0.0', port=port, debug=True)
